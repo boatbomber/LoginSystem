@@ -6,8 +6,7 @@ local DataStore = DataStoreService:GetDataStore("Moderator_Login_v0.1.0t.4")
 
 -- Modules
 
-local Packages = ReplicatedStorage:WaitForChild("Packages")
-local HashLib = require(Packages.HashLib)
+local HashLib = require(script.Parent.HashLib)
 
 -----------------------------------------------------------------------------------
 
