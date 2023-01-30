@@ -1,6 +1,7 @@
 -- Services
 
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 
 -- Modules
 
@@ -8,12 +9,21 @@ local HashLib = require(script.Parent.HashLib)
 
 -----------------------------------------------------------------------------------
 
+export type Config = {
+	LOGIN_MUST_BE_CREATOR: boolean?,
+	PASSWORD_REQUIREMENTS: boolean?,
+	HASH_ALGORITHM: string?,
+	SALT_SIZE: number?,
+	RATE_LIMIT_MULTIPLIER: number?,
+}
+
 local LoginSystem = {}
 LoginSystem.__index = LoginSystem
 
-function LoginSystem.new(dataStoreName: string?, config: {}?)
+function LoginSystem.new(dataStoreName: string?, config: Config?)
 	local loginSystem = setmetatable({
 		DataStore = DataStoreService:GetDataStore(dataStoreName or "Login_System"),
+		SessionKeys = {},
 		LastAttempt = {},
 		Config = {
 			-- Sets if only the creator of the account can login
@@ -38,11 +48,11 @@ function LoginSystem.new(dataStoreName: string?, config: {}?)
 	return loginSystem
 end
 
-function LoginSystem:CheckForUser(Player, Username)
+function LoginSystem:CheckForUser(Username): boolean
 	return self.DataStore:GetAsync(tostring(Username)) ~= nil
 end
 
-function LoginSystem:Register(Player, Username, Password)
+function LoginSystem:Register(Player, Username, Password): (boolean, string)
 	-- Parameter Validation
 
 	if type(Username) ~= "string" then
@@ -114,7 +124,7 @@ function LoginSystem:Register(Player, Username, Password)
 	end
 end
 
-function LoginSystem:Login(Player, Username, Password)
+function LoginSystem:Login(Player, Username, Password): (boolean, string)
 	-- Parameter Validation
 
 	if type(Username) ~= "string" or #Username < 1 then
@@ -183,7 +193,34 @@ function LoginSystem:Login(Player, Username, Password)
 		Delay = 1,
 	}
 
+	local sessionKey = HttpService:GenerateGUID(false)
+	self.SessionKeys[Player] = sessionKey
+
 	return true, "Successfully logged in"
+end
+
+function LoginSystem:LogOut(Player): ()
+	self.SessionKeys[Player] = nil
+end
+
+function LoginSystem:IsLoggedIn(Player): boolean
+	return self.SessionKeys[Player] ~= nil
+end
+
+function LoginSystem:ValidateLoginSession(Player, SessionKey): (boolean, string)
+	if type(SessionKey) ~= "string" then
+		return false, "Invalid session key"
+	end
+
+	if not self:IsLoggedIn(Player) then
+		return false, "Not logged in"
+	end
+
+	if self.SessionKeys[Player] ~= SessionKey then
+		return false, "Incorrect session key"
+	end
+
+	return true, "User is logged in"
 end
 
 return LoginSystem
