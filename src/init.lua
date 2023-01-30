@@ -1,8 +1,6 @@
 -- Services
 
 local DataStoreService = game:GetService("DataStoreService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local DataStore = DataStoreService:GetDataStore("Moderator_Login_v0.1.0t.4")
 
 -- Modules
 
@@ -10,30 +8,42 @@ local HashLib = require(script.Parent.HashLib)
 
 -----------------------------------------------------------------------------------
 
-local LoginSystem = {
-	LastAttempt = {},
-	Settings = {
-		-- Sets if only the creator of the account can login
-		LOGIN_MUST_BE_CREATOR = true,
-		-- Sets if passwords must be 5+ chars, contain uppercase and lowercase, etc (HIGHLY RECCOMENDED)
-		PASSWORD_REQUIREMENTS = true,
-		-- Chooses which hash function to use from HashLib
-		HASH_ALGORITHM = "sha256",
-		-- Sets how many characters the hash salt is
-		SALT_SIZE = 10,
-		-- Sets the rate at which the rate limit multiplies after each failed attempt (prevents brute force)
-		RATE_LIMIT_MULTIPLIER = 2.5,
-	},
-}
+local LoginSystem = {}
+LoginSystem.__index = LoginSystem
+
+function LoginSystem.new(dataStoreName: string?, config: {}?)
+	local loginSystem = setmetatable({
+		DataStore = DataStoreService:GetDataStore(dataStoreName or "Login_System"),
+		LastAttempt = {},
+		Config = {
+			-- Sets if only the creator of the account can login
+			LOGIN_MUST_BE_CREATOR = true,
+			-- Sets if passwords must be 5+ chars, contain uppercase and lowercase, etc (HIGHLY RECCOMENDED)
+			PASSWORD_REQUIREMENTS = true,
+			-- Chooses which hash function to use from HashLib
+			HASH_ALGORITHM = "sha256",
+			-- Sets how many characters the hash salt is
+			SALT_SIZE = 10,
+			-- Sets the rate at which the rate limit multiplies after each failed attempt (prevents brute force)
+			RATE_LIMIT_MULTIPLIER = 2.5,
+		},
+	}, LoginSystem)
+
+	if type(config) == "table" then
+		for key, value in config do
+			loginSystem.Config[key] = value
+		end
+	end
+
+	return loginSystem
+end
 
 function LoginSystem:CheckForUser(Player, Username)
-	return DataStore:GetAsync(tostring(Username)) ~= nil
+	return self.DataStore:GetAsync(tostring(Username)) ~= nil
 end
 
 function LoginSystem:Register(Player, Username, Password)
-	-------------------------------------------------------------------------------
 	-- Parameter Validation
-	-------------------------------------------------------------------------------
 
 	if type(Username) ~= "string" then
 		return false, "Invalid username: '" .. tostring(Username) .. "'"
@@ -47,7 +57,7 @@ function LoginSystem:Register(Player, Username, Password)
 		return false, "Invalid password: '" .. tostring(Password) .. "'"
 	end
 
-	if self.Settings.PASSWORD_REQUIREMENTS then
+	if self.Config.PASSWORD_REQUIREMENTS then
 		if #Password < 5 then
 			return false, "Password must be 5+ characters long"
 		end
@@ -69,32 +79,28 @@ function LoginSystem:Register(Player, Username, Password)
 		end
 	end
 
-	local HashFunction = HashLib[self.Settings.HASH_ALGORITHM]
+	local HashFunction = HashLib[self.Config.HASH_ALGORITHM]
 	if not HashFunction then
-		return false, "Invalid hash algorithm: '" .. tostring(self.Settings.HASH_ALGORITHM) .. "'"
+		return false, "Invalid hash algorithm: '" .. tostring(self.Config.HASH_ALGORITHM) .. "'"
 	end
 
-	-------------------------------------------------------------------------------
 	-- Availability Check
-	-------------------------------------------------------------------------------
 
-	local PreviousRegister = DataStore:GetAsync(Username)
+	local PreviousRegister = self.DataStore:GetAsync(Username)
 
 	if PreviousRegister then
 		return false, "Username '" .. Username .. "' is already taken"
 	end
 
-	-------------------------------------------------------------------------------
 	-- User Data Creation & Storage
-	-------------------------------------------------------------------------------
 
 	local SaltTable = {}
-	for i = 1, math.abs(self.Settings.SALT_SIZE) do
+	for i = 1, math.abs(self.Config.SALT_SIZE) do
 		table.insert(SaltTable, string.char(math.random(33, 126)))
 	end
 	local Salt = table.concat(SaltTable)
 
-	local DataSaved, Result = pcall(DataStore.SetAsync, DataStore, Username, {
+	local DataSaved, Result = pcall(self.DataStore.SetAsync, self.DataStore, Username, {
 		Username = Username,
 		PasswordHash = HashFunction(Password .. Salt),
 		Salt = Salt,
@@ -102,16 +108,14 @@ function LoginSystem:Register(Player, Username, Password)
 	})
 
 	if not DataSaved then
-		return false, "Registering failed"
+		return false, "Registering failed: " .. Result
 	else
 		return true, "Registered successfully"
 	end
 end
 
 function LoginSystem:Login(Player, Username, Password)
-	-------------------------------------------------------------------------------
 	-- Parameter Validation
-	-------------------------------------------------------------------------------
 
 	if type(Username) ~= "string" or #Username < 1 then
 		warn("Invalid username: " .. type(Username))
@@ -125,14 +129,12 @@ function LoginSystem:Login(Player, Username, Password)
 		return false, "Invalid password: " .. type(Password)
 	end
 
-	local HashFunction = HashLib[self.Settings.HASH_ALGORITHM]
+	local HashFunction = HashLib[self.Config.HASH_ALGORITHM]
 	if not HashFunction then
-		return false, "Invalid hash algorithm: '" .. tostring(self.Settings.HASH_ALGORITHM) .. "'"
+		return false, "Invalid hash algorithm: '" .. tostring(self.Config.HASH_ALGORITHM) .. "'"
 	end
 
-	-------------------------------------------------------------------------------
 	-- Rate Limiting
-	-------------------------------------------------------------------------------
 
 	local Limiter = self.LastAttempt[Username]
 
@@ -145,11 +147,9 @@ function LoginSystem:Login(Player, Username, Password)
 		Limiter = { Tick = 0, Delay = 1 }
 	end
 
-	-------------------------------------------------------------------------------
 	-- Success Check
-	-------------------------------------------------------------------------------
 
-	local Registered = DataStore:GetAsync(Username)
+	local Registered = self.DataStore:GetAsync(Username)
 	if not Registered then
 		return false, "User not found"
 	end
@@ -159,20 +159,20 @@ function LoginSystem:Login(Player, Username, Password)
 	if PasswordHash ~= Registered.PasswordHash then
 		self.LastAttempt[Username] = {
 			Tick = tick(),
-			Delay = (Limiter.Delay or 1) * self.Settings.RATE_LIMIT_MULTIPLIER,
+			Delay = (Limiter.Delay or 1) * self.Config.RATE_LIMIT_MULTIPLIER,
 		}
 
 		return false, "Password is incorrect"
 	end
 
-	if self.Settings.LOGIN_MUST_BE_CREATOR and Player.UserId ~= Registered.CreatorId then
+	if self.Config.LOGIN_MUST_BE_CREATOR and Player.UserId ~= Registered.CreatorId then
 		-- Username and password are both valid, but access is denied.
 		-- We don't return that to them, because that would give away
 		-- that they cracked the account credentials!
 
 		self.LastAttempt[Username] = {
 			Tick = tick(),
-			Delay = (Limiter.Delay or 1) * self.Settings.RATE_LIMIT_MULTIPLIER,
+			Delay = (Limiter.Delay or 1) * self.Config.RATE_LIMIT_MULTIPLIER,
 		}
 
 		return false, "Password is incorrect"
